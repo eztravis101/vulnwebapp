@@ -1,0 +1,69 @@
+import json
+import pandas as pd
+import re
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+
+# 1. Load and Preprocess Data
+def extract_features(log_entry):
+    input_str = str(log_entry.get('input_raw', '')).lower()
+    
+    # Feature Engineering: Looking for indicators of shell activity
+    features = {
+        'length': len(input_str),
+        'has_pipe': 1 if '|' in input_str else 0,
+        'has_semicolon': 1 if ';' in input_str else 0,
+        'has_ampersand': 1 if '&' in input_str else 0,
+        'has_redirect': 1 if '>' in input_str or '<' in input_str else 0,
+        'has_shell_keyword': 1 if any(k in input_str for k in ['nc', 'bash', 'sh', 'python', 'curl', 'wget', 'cat', 'whoami']) else 0,
+        'is_ping_event': 1 if log_entry.get('event_type') == 'TOOL_PING' else 0,
+        'exit_code': log_entry.get('exit_code', 0)
+    }
+    
+    # Labeling logic for training:
+    # In a real scenario, you'd have a labeled dataset. 
+    # Here we define "Malicious" as a Ping containing special shell characters.
+    is_malicious = 1 if (features['is_ping_event'] == 1 and 
+                         (features['has_pipe'] or features['has_semicolon'] or features['has_ampersand'])) else 0
+    
+    return features, is_malicious
+
+# 2. Prepare Dataset
+data = []
+labels = []
+
+with open('audit_logs.json', 'r') as f:
+    for line in f:
+        if line.strip():
+            feat, label = extract_features(json.loads(line))
+            data.append(feat)
+            labels.append(label)
+
+df = pd.DataFrame(data)
+X = df
+y = labels
+
+# 3. Train/Test Split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 4. Model Training (Random Forest)
+model = RandomForestClassifier(n_estimators=100)
+model.fit(X_train, y_train)
+
+# 5. Evaluation
+y_pred = model.predict(X_test)
+print("Model Accuracy:", accuracy_score(y_test, y_pred))
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
+
+# Example Prediction
+def predict_input(user_input):
+    dummy_entry = {"input_raw": user_input, "event_type": "TOOL_PING", "exit_code": 1}
+    feat, _ = extract_features(dummy_entry)
+    prediction = model.predict(pd.DataFrame([feat]))
+    return "MALICIOUS" if prediction[0] == 1 else "BENIGN"
+
+print("\n--- Testing the Model ---")
+print(f"Input: '8.8.8.8' -> Prediction: {predict_input('8.8.8.8')}")
+print(f"Input: '8.8.8.8; nc -lvp 4444' -> Prediction: {predict_input('8.8.8.8; nc -lvp 4444')}")
